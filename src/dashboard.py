@@ -50,7 +50,7 @@ tum_iskeleler = sorted(df['station_poi_desc_cd'].unique())
 secilen_kalkis = st.sidebar.selectbox("Kalkış İskelesi (Nereden?):", tum_iskeleler)
 
 hatlar = sorted(df[df['station_poi_desc_cd'] == secilen_kalkis]['line_name'].unique())
-secilen_hat = st.sidebar.selectbox("Varış Hattı (Nereye?):", hatlar)
+secilen_hat = st.sidebar.selectbox("Varış İskelesi (Nereye?):", hatlar)
 
 # --- ANALİZ MANTIĞI ---
 mask = (df['Yıl'] == secilen_yil) & (df['Ay_Gun'] == secilen_gun) & \
