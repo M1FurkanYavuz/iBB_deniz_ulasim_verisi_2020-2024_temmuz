@@ -1,0 +1,6 @@
+data/*
+!data/sadece_deniz_temmuz.csv
+venv/
+.idea/
+__pycache__/
+*.pyc
