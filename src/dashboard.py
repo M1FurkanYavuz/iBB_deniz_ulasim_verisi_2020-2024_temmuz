@@ -49,7 +49,7 @@ except Exception as e:
 
 # --- 3. NAVİGASYON (SIDEBAR) ---
 st.sidebar.title("🚢 Analiz Menüsü")
-sayfa_secimi = st.sidebar.radio("Görünüm Seçin:", ["Klasik Hat Analizi (Kırmızı)", "Akış Matrisi (Mavi)"])
+sayfa_secimi = st.sidebar.radio("Görünüm Seçin:", ["Klasik Hat Analizi", "Akış Matrisi"])
 st.sidebar.divider()
 
 # --- SAYFA 1: KLASİK HAT ANALİZİ ---
