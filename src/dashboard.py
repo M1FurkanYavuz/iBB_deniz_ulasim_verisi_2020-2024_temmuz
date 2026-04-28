@@ -2,76 +2,100 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-st.set_page_config(page_title="İBB Deniz O-D Analizi", layout="wide")
+# 1. SAYFA YAPILANDIRMASI
+st.set_page_config(page_title="İBB Deniz Ulaşım Analizi", layout="wide")
 
 
+# Veri Yükleme (Cache ile hızlandırılmış)
 @st.cache_data
 def veri_getir():
+    # GitHub'daki işlenmiş veriyi okur
     df = pd.read_csv("data/sadece_deniz_temmuz.csv")
     df['transition_date'] = pd.to_datetime(df['transition_date'])
     df['station_poi_desc_cd'] = df['station_poi_desc_cd'].fillna("Bilinmiyor").astype(str)
     df['line_name'] = df['line_name'].fillna("Bilinmiyor").astype(str)
 
-    # --- BA MANTIĞI: Hat adından Varış İskelesini Tahmin Etme ---
-    # Örn: "EMINONU-KDK" -> Varış: KDK
+    # Matris sayfasında kullanılacak varış tahmini mantığı
     def varis_bul(line, origin):
         parts = line.replace("-", " ").split()
-        # Origin ismindeki kelimeleri çıkar, geri kalanı varış kabul et
         remaining = [p for p in parts if p not in origin]
         return " ".join(remaining) if remaining else line
 
-    df['varis_iskelesi'] = df.apply(lambda x: varis_bul(x['line_name'], x['station_poi_desc_cd']), axis=1)
+    df['varis_tahmini'] = df.apply(lambda x: varis_bul(x['line_name'], x['station_poi_desc_cd']), axis=1)
     return df
 
 
 df = veri_getir()
 
-# --- SOL PANEL ---
-st.sidebar.header("🔍 O-D Filtreleri")
-secilen_tarih = st.sidebar.date_input("Analiz Tarihi", value=df['transition_date'].max())
+# --- 2. SOL PANEL (NAVİGASYON VE FİLTRELER) ---
+st.sidebar.title("🚢 Menü")
+sayfa = st.sidebar.radio("Analiz Türü Seçin:", ["Klasik Hat Analizi (Favori)", "Akış Matrisi (Detaylı)"])
 
-tum_iskeler = sorted(df['station_poi_desc_cd'].unique())
-secilen_baslangic = st.sidebar.multiselect("Başlangıç İskeleleri", options=tum_iskeler, default=tum_iskeler[:5])
+st.sidebar.divider()
+st.sidebar.header("🔍 Filtreler")
 
-# VERİ FİLTRELEME
-mask = (df['transition_date'].dt.date == secilen_tarih) & (df['station_poi_desc_cd'].isin(secilen_baslangic))
-f_df = df[mask]
+# Tarih Seçimi (Tüm sayfalar için ortak)
+max_tarih = df['transition_date'].max()
+secilen_tarih = st.sidebar.date_input("Tarih Seçin", value=max_tarih)
 
-# --- ANA SAYFA ---
-st.title("⚓ İskeleler Arası Yolcu Akış Matrisi")
-st.markdown(f"**Tarih:** {secilen_tarih.strftime('%d %B %Y')}")
+# --- SAYFA 1: KLASİK HAT ANALİZİ (Senin sevdiğin sade görünüm) ---
+if sayfa == "Klasik Hat Analizi (Favori)":
+    gun_metni = secilen_tarih.strftime('%d %B %Y, %A')
+    st.title(f":blue[{gun_metni}]")
+    st.subheader("İskele Bazlı Varış İskelesi / Hattı Analizi")
 
-if not f_df.empty:
-    # 1. MATRİS (HEATMAP) HAZIRLIĞI
-    # Satırlar: Başlangıç İskelesi, Sütunlar: Varış Hattı/İskelesi
-    matris = f_df.pivot_table(
-        index='station_poi_desc_cd',
-        columns='varis_iskelesi',
-        values='number_of_passenger',
-        aggfunc='sum'
-    ).fillna(0)
+    # İskele seçimi (Tekli seçim - Klasik mantık)
+    iskeleler = sorted(df['station_poi_desc_cd'].unique())
+    secilen_iskele = st.sidebar.selectbox("Başlangıç İskelesi Seçin:", iskeleler)
 
-    st.subheader("📊 Nereden Nereye? (Yolcu Yoğunluk Matrisi)")
-    st.write("Kutulardaki renk koyulaştıkça yolcu akışı artmaktadır.")
+    # Veri Filtreleme
+    f_df = df[(df['transition_date'].dt.date == secilen_tarih) & (df['station_poi_desc_cd'] == secilen_iskele)]
 
-    fig_heatmap = px.imshow(
-        matris,
-        labels=dict(x="Varış Güzergahı", y="Başlangıç İskelesi", color="Yolcu"),
-        x=matris.columns,
-        y=matris.index,
-        color_continuous_scale="Blues",
-        text_auto=True,  # Sayıları kutuların içine yazar
-        aspect="auto"
-    )
-    st.plotly_chart(fig_heatmap, use_container_width=True)
+    if not f_df.empty:
+        # KPI
+        st.metric("Bu İskeleden Kalkan Toplam Yolcu", f"{f_df['number_of_passenger'].sum():,}")
 
-    # 2. EN YOĞUN AKIŞLAR TABLOSU
-    st.subheader("🔝 En Yoğun 10 İskeleler Arası Akış")
-    akis_ozet = f_df.groupby(['station_poi_desc_cd', 'varis_iskelesi'])['number_of_passenger'].sum().reset_index()
-    akis_ozet = akis_ozet.sort_values(by='number_of_passenger', ascending=False).head(10)
-    akis_ozet.columns = ['Nereden', 'Nereye/Hangi Hattaki', 'Toplam Yolcu']
+        # Grafik
+        grafik_data = f_df.groupby('line_name')['number_of_passenger'].sum().sort_values(ascending=True).reset_index()
+        fig = px.bar(grafik_data, x='number_of_passenger', y='line_name',
+                     orientation='h',
+                     title=f"{secilen_iskele} İskelesinden Gidilen Yönler",
+                     labels={'number_of_passenger': 'Yolcu Sayısı', 'line_name': 'Varış İskelesi / Hattı'},
+                     color='number_of_passenger',
+                     color_continuous_scale="Blues")
+        st.plotly_chart(fig, use_container_width=True)
 
-    st.table(akis_ozet)
+        # Tablo
+        st.write("Veri Detayı:")
+        st.dataframe(f_df[['transition_hour', 'line_name', 'number_of_passenger']].sort_values(by='transition_hour'),
+                     use_container_width=True)
+    else:
+        st.warning("Seçilen tarihte bu iskeleden veri bulunamadı.")
 
+# --- SAYFA 2: AKIŞ MATRİSİ (Modern O-D Görünümü) ---
 else:
-    st.error("Seçilen kriterlerde veri yok. Lütfen farklı iskele veya tarih seçin.")
+    st.title(":blue[İskeleler Arası Yolcu Akış Matrisi]")
+
+    # Çoklu İskele seçimi
+    iskeleler = sorted(df['station_poi_desc_cd'].unique())
+    secilen_iskeler = st.sidebar.multiselect("Başlangıç İskelelerini Seçin:", iskeleler, default=iskeleler[:5])
+
+    f_df = df[(df['transition_date'].dt.date == secilen_tarih) & (df['station_poi_desc_cd'].isin(secilen_iskeler))]
+
+    if not f_df.empty:
+        # Isı Haritası (Heatmap)
+        matris = f_df.pivot_table(index='station_poi_desc_cd', columns='varis_tahmini',
+                                  values='number_of_passenger', aggfunc='sum').fillna(0)
+
+        fig_heat = px.imshow(matris, text_auto=True, color_continuous_scale="Blues",
+                             labels=dict(x="Varış Güzergahı", y="Başlangıç İskelesi", color="Yolcu"),
+                             aspect="auto")
+        st.plotly_chart(fig_heat, use_container_width=True)
+
+        # Saatlik Trend
+        st.subheader("⏰ Saatlik Yolcu Yoğunluğu")
+        saatlik = f_df.groupby('transition_hour')['number_of_passenger'].sum().reset_index()
+        fig_line = px.line(saatlik, x='transition_hour', y='number_of_passenger', markers=True)
+        st.plotly_chart(fig_line, use_container_width=True)
+    else:
+        st.error("Veri bulunamadı.")
