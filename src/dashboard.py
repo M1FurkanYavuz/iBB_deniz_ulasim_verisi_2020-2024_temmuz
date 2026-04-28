@@ -23,7 +23,7 @@ max_tarih = df['transition_date'].max()
 secilen_tarih = st.sidebar.date_input("Tarih Seçin", value=max_tarih, min_value=min_tarih, max_value=max_tarih)
 
 # İskele Filtresi (Çoklu Seçim)
-tum_iskeler = sorted(df['station_poi_desc_cd'].unique())
+tum_iskeler = sorted(df['station_poi_desc_cd'].dropna().astype(str).unique())
 secilen_iskeler = st.sidebar.multiselect("İskeleleri Filtrele", options=tum_iskeler, default=tum_iskeler[:5])
 
 # Veriyi Filtreleme
