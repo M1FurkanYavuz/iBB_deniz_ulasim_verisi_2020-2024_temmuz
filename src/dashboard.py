@@ -5,35 +5,37 @@ import plotly.express as px
 # 1. SAYFA AYARLARI
 st.set_page_config(page_title="İBB Deniz Ulaşım Analizi", layout="wide")
 
-# Gün isimlerini Türkçeleştirmek için sözlük
+# Gün isimleri sözlüğü
 GUN_ESLESTIRME = {
     'Monday': 'Pazartesi', 'Tuesday': 'Salı', 'Wednesday': 'Çarşamba',
     'Thursday': 'Perşembe', 'Friday': 'Cuma', 'Saturday': 'Cumartesi', 'Sunday': 'Pazar'
 }
 
 
-# 2. VERİ YÜKLEME (GÜVENLİ HALE GETİRİLDİ)
+# 2. VERİ YÜKLEME (EN RADİKAL TEMİZLİK)
 @st.cache_data
 def veri_yukle():
-    df = pd.read_csv("data/sadece_deniz_temmuz.csv", encoding='utf-8-sig')
+    # Dosyayı oku (Düşük bellek uyarısını kapatmak için low_memory=False)
+    df = pd.read_csv("data/sadece_deniz_temmuz.csv", encoding='utf-8-sig', low_memory=False)
 
-    # --- KRİTİK TEMİZLİK: Hataları engelleyen kısım ---
-    # Sütunlardaki boşlukları temizle ve her şeyi metne (str) çevir
-    df['station_poi_desc_cd'] = df['station_poi_desc_cd'].fillna("Bilinmiyor").astype(str)
-    df['line_name'] = df['line_name'].fillna("Bilinmiyor").astype(str)
+    # 1. Aşama: Boşlukları hemen yok et ve tipleri sabitle
+    df['station_poi_desc_cd'] = df['station_poi_desc_cd'].astype(str).replace('nan', 'Bilinmiyor').fillna('Bilinmiyor')
+    df['line_name'] = df['line_name'].astype(str).replace('nan', 'Bilinmiyor').fillna('Bilinmiyor')
 
-    # Zaman bileşenleri
-    df['transition_date'] = pd.to_datetime(df['transition_date'])
-    df['Yıl'] = df['transition_date'].dt.year.fillna(0).astype(int)
-    df['Ay_Gun'] = df['transition_date'].dt.day.fillna(0).astype(int)
-    df['Gun_Adi_Tr'] = df['transition_date'].dt.day_name().map(GUN_ESLESTIRME).fillna("Bilinmiyor")
+    # 2. Aşama: Tarih işlemleri
+    df['transition_date'] = pd.to_datetime(df['transition_date'], errors='coerce')
+    df = df.dropna(subset=['transition_date'])  # Tarihi bozuk olanları at
 
-    # Varış tahmini (Matris sayfası için)
+    df['Yıl'] = df['transition_date'].dt.year.astype(int)
+    df['Ay_Gun'] = df['transition_date'].dt.day.astype(int)
+    df['Gun_Adi_Tr'] = df['transition_date'].dt.day_name().map(GUN_ESLESTIRME)
+
+    # 3. Aşama: Varış Tahmini
     def varis_bul(line, origin):
-        line_str = str(line).replace("-", " ")
-        parts = line_str.split()
-        remaining = [p for p in parts if p not in str(origin)]
-        return " ".join(remaining) if remaining else line_str
+        l, o = str(line), str(origin)
+        parts = l.replace("-", " ").split()
+        res = [p for p in parts if p not in o]
+        return " ".join(res) if res else l
 
     df['varis_tahmini'] = df.apply(lambda x: varis_bul(x['line_name'], x['station_poi_desc_cd']), axis=1)
 
@@ -41,91 +43,75 @@ def veri_yukle():
 
 
 # Veriyi yükle
-try:
-    df = veri_yukle()
-except Exception as e:
-    st.error(f"Veri yükleme hatası: {e}")
-    st.stop()
+df = veri_yukle()
 
-# --- 3. NAVİGASYON (SIDEBAR) ---
-st.sidebar.title("🚢 Analiz Menüsü")
-sayfa_secimi = st.sidebar.radio("Görünüm Seçin:", ["Klasik Hat Analizi", "Akış Matrisi"])
-st.sidebar.divider()
+# --- 3. NAVİGASYON ---
+st.sidebar.title("🚢 Menü")
+# Sidebar'a bir 'Önbelleği Temizle' butonu koyalım ki hata donup kalmasın
+if st.sidebar.button("⚙️ Veriyi Yenile (Cache Clear)"):
+    st.cache_data.clear()
+    st.rerun()
 
-# --- SAYFA 1: KLASİK HAT ANALİZİ ---
-if sayfa_secimi == "Klasik Hat Analizi (Kırmızı)":
-    st.sidebar.header("🔍 Operasyonel Filtreler")
+sayfa = st.sidebar.radio("Görünüm:", ["Klasik Hat Analizi (Kırmızı)", "Akış Matrisi (Mavi)"])
 
-    # Yıl seçimi (Sıralama hatası engellendi)
-    yillar = sorted([int(y) for y in df['Yıl'].unique() if y > 0], reverse=True)
+
+# --- YARDIMCI FONKSİYON: GÜVENLİ SIRALAMA ---
+def guvenli_liste(seri):
+    # Bu fonksiyon listenin içinde asla 'nan' veya 'float' bırakmaz, sadece sıralı metin döndürür
+    liste = [str(x) for x in seri.unique() if str(x).lower() != 'nan']
+    return sorted(liste)
+
+
+# --- SAYFA 1: KLASİK ANALİZ ---
+if sayfa == "Klasik Hat Analizi (Kırmızı)":
+    st.sidebar.header("🔍 Filtreler")
+
+    yillar = sorted([int(y) for y in df['Yıl'].unique()], reverse=True)
     secilen_yil = st.sidebar.selectbox("Yıl Seçin:", yillar)
+    secilen_gun = st.sidebar.slider("Gün Seçin:", 1, 31, 5)
 
-    secilen_gun = st.sidebar.slider("Temmuz Ayının Hangi Günü?", 1, 31, 5)
+    # Gün adı bulma
+    gun_df = df[(df['Yıl'] == secilen_yil) & (df['Ay_Gun'] == secilen_gun)]
+    gun_adi = gun_df['Gun_Adi_Tr'].iloc[0] if not gun_df.empty else "Veri Yok"
 
-    # Dinamik gün ismi bulma
-    ornek_df = df[(df['Yıl'] == secilen_yil) & (df['Ay_Gun'] == secilen_gun)]
-    secilen_gun_adi = ornek_df['Gun_Adi_Tr'].iloc[0] if not ornek_df.empty else "Bilinmiyor"
+    # İskele ve Hat seçimi (Güvenli liste kullanıyoruz)
+    iskeleler = guvenli_liste(df['station_poi_desc_cd'])
+    secilen_kalkis = st.sidebar.selectbox("Nereden?", iskeleler)
 
-    # İskele seçimi (Sıralama hatası engellendi)
-    tum_iskeleler = sorted([str(i) for i in df['station_poi_desc_cd'].unique()])
-    secilen_kalkis = st.sidebar.selectbox("Kalkış İskelesi (Nereden?):", tum_iskeleler)
-
-    # Hat seçimi
-    hatlar_df = df[df['station_poi_desc_cd'] == secilen_kalkis]
-    tum_hatlar = sorted([str(h) for h in hatlar_df['line_name'].unique()])
-    secilen_hat = st.sidebar.selectbox("Varış Hattı (Nereye?):", tum_hatlar)
+    hatlar = guvenli_liste(df[df['station_poi_desc_cd'] == secilen_kalkis]['line_name'])
+    secilen_hat = st.sidebar.selectbox("Nereye?", hatlar)
 
     # Filtreleme
-    sonuc_df = df[(df['Yıl'] == secilen_yil) & (df['Ay_Gun'] == secilen_gun) &
-                  (df['station_poi_desc_cd'] == secilen_kalkis) & (df['line_name'] == secilen_hat)]
+    f_df = df[(df['Yıl'] == secilen_yil) & (df['Ay_Gun'] == secilen_gun) &
+              (df['station_poi_desc_cd'] == secilen_kalkis) & (df['line_name'] == secilen_hat)]
 
-    st.title(f"⚓ {secilen_gun} Temmuz {secilen_yil}, {secilen_gun_adi}")
-    st.info(f"**Analiz Edilen Rota:** {secilen_hat}")
-
-    if not sonuc_df.empty:
-        grafik_df = sonuc_df.groupby('transition_hour')['number_of_passenger'].sum().reset_index()
-
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Günlük Toplam Yolcu", f"{grafik_df['number_of_passenger'].sum():,}")
-
-        # Zirve saat bulma
-        if not grafik_df.empty:
-            pik_saat = grafik_df.loc[grafik_df['number_of_passenger'].idxmax(), 'transition_hour']
-            col2.metric("Zirve Saat", f"{pik_saat}:00")
-
-        col3.metric("Haftanın Günü", secilen_gun_adi)
-
-        # GRAFİK
-        fig = px.bar(grafik_df, x='transition_hour', y='number_of_passenger',
-                     labels={'transition_hour': 'Saat', 'number_of_passenger': 'Yolcu Sayısı'},
-                     text_auto='.2s', color='number_of_passenger',
-                     color_continuous_scale='Reds', template="plotly_dark")
-        fig.update_layout(xaxis=dict(tickmode='linear', tick0=0, dtick=1))
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.warning("Bu seçim için veri bulunamadı.")
-
-# --- SAYFA 2: AKIŞ MATRİSİ ---
-else:
-    st.title(":blue[İskeleler Arası Yolcu Akış Matrisi]")
-
-    # Sidebar filtreleri (Key kullanarak çakışma engellendi)
-    yillar_m = sorted([int(y) for y in df['Yıl'].unique() if y > 0], reverse=True)
-    secilen_yil_m = st.sidebar.selectbox("Yıl Seçin", yillar_m, key="y2")
-    secilen_gun_m = st.sidebar.slider("Gün Seçin", 1, 31, 5, key="g2")
-
-    iskeler_m = sorted([str(i) for i in df['station_poi_desc_cd'].unique()])
-    secilen_iskeler = st.sidebar.multiselect("Başlangıç İskeleleri:", iskeler_m, default=iskeler_m[:5])
-
-    f_df = df[(df['Yıl'] == secilen_yil_m) & (df['Ay_Gun'] == secilen_gun_m) & (
-        df['station_poi_desc_cd'].isin(secilen_iskeler))]
+    st.title(f"⚓ {secilen_gun} Temmuz {secilen_yil}, {gun_adi}")
 
     if not f_df.empty:
-        st.subheader(f"📊 {secilen_gun_m} Temmuz {secilen_yil_m} Matrisi")
-        matris = f_df.pivot_table(index='station_poi_desc_cd', columns='varis_tahmini',
-                                  values='number_of_passenger', aggfunc='sum').fillna(0)
+        g_df = f_df.groupby('transition_hour')['number_of_passenger'].sum().reset_index()
+        col1, col2 = st.columns(2)
+        col1.metric("Toplam Yolcu", f"{g_df['number_of_passenger'].sum():,}")
+        col2.metric("Gün", gun_adi)
 
-        fig_heat = px.imshow(matris, text_auto=True, color_continuous_scale="Blues", aspect="auto")
-        st.plotly_chart(fig_heat, use_container_width=True)
+        fig = px.bar(g_df, x='transition_hour', y='number_of_passenger',
+                     template="plotly_dark", color_continuous_scale="Reds", color='number_of_passenger')
+        st.plotly_chart(fig, use_container_width=True)
     else:
-        st.info("Filtreleri kullanarak veri görüntüleyebilirsiniz.")
+        st.warning("Veri bulunamadı.")
+
+# --- SAYFA 2: MATRİS ---
+else:
+    st.title(":blue[İskeleler Arası Akış Matrisi]")
+    y_m = st.sidebar.selectbox("Yıl", sorted(df['Yıl'].unique(), reverse=True), key="ym")
+    g_m = st.sidebar.slider("Gün", 1, 31, 5, key="gm")
+    isk_m = st.sidebar.multiselect("İskeleler:", guvenli_liste(df['station_poi_desc_cd']),
+                                   default=guvenli_liste(df['station_poi_desc_cd'])[:5])
+
+    m_df = df[(df['Yıl'] == y_m) & (df['Ay_Gun'] == g_m) & (df['station_poi_desc_cd'].isin(isk_m))]
+
+    if not m_df.empty:
+        matris = m_df.pivot_table(index='station_poi_desc_cd', columns='varis_tahmini',
+                                  values='number_of_passenger', aggfunc='sum').fillna(0)
+        st.plotly_chart(px.imshow(matris, text_auto=True, color_continuous_scale="Blues"), use_container_width=True)
+    else:
+        st.info("Filtre seçimi yapın.")
